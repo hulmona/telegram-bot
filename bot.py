@@ -1,5 +1,7 @@
 from pyrogram import Client, filters
 import asyncio
+from flask import Flask
+from threading import Thread
 
 API_ID = 38438389
 API_HASH = "327b2592682ff56d760110350e66425e"
@@ -24,9 +26,9 @@ async def search(client, message):
         await message.reply(
             f"Found: {name}",
             reply_markup={
-                "inline_keyboard":[[
-                    {"text":"📥 Download","callback_data":name}
-                ]]
+                "inline_keyboard":[
+                    [{"text":"📥 Download","callback_data":name}]
+                ]
             }
         )
 
@@ -41,5 +43,17 @@ async def send_file(client, callback_query):
 
         await asyncio.sleep(300)
         await sent.delete()
+
+# keep alive server
+web = Flask('')
+
+@web.route('/')
+def home():
+    return "Bot running"
+
+def run():
+    web.run(host="0.0.0.0", port=8080)
+
+Thread(target=run).start()
 
 app.run()
