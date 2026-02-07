@@ -7,8 +7,8 @@ API_ID = int(os.environ.get("API_ID"))
 API_HASH = os.environ.get("API_HASH")
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
-CHANNEL_ID = int(os.environ.get("CHANNEL_ID"))
-GROUP_ID = int(os.environ.get("GROUP_ID"))
+CHANNEL_ID = -1003801817080
+GROUP_ID = -1003836121942
 
 bot = Client(
     "moviebot",
@@ -17,48 +17,45 @@ bot = Client(
     bot_token=BOT_TOKEN
 )
 
-# START MESSAGE DM
+# start msg
 @bot.on_message(filters.command("start") & filters.private)
-async def start_dm(client, message):
+async def start(client, message):
     if len(message.command) == 1:
         await message.reply_text(
             "👋 Welcome to MOVIE UNIVERSE FILE PROVIDER\n\nSend movie name in group."
         )
         return
 
+    # file send system
     file_id = int(message.command[1])
     msg = await client.get_messages(CHANNEL_ID, file_id)
-
     sent = await msg.copy(message.chat.id)
 
-    warn = await message.reply_text(
-        "⚠️ File will delete in 5 minutes\nForward and download fast."
-    )
+    await message.reply_text("⚠️ File will delete in 5 minutes")
 
     await asyncio.sleep(300)
     await sent.delete()
-    await warn.delete()
 
 
-# GROUP SEARCH
+# group search
 @bot.on_message(filters.text & filters.chat(GROUP_ID))
-async def search_group(client, message):
+async def search(client, message):
     query = message.text
-
-    searching = await message.reply_text("🔎 Searching...")
+    await message.reply_text("🔎 Searching...")
 
     found = False
 
-    async for msg in client.search_messages(CHANNEL_ID, query, limit=20):
+    async for msg in client.search_messages(CHANNEL_ID, query, limit=10):
         if msg.document or msg.video:
 
-            file_id = msg.id
+            found = True
             name = msg.document.file_name if msg.document else msg.video.file_name
+            file_id = msg.id
 
             btn = InlineKeyboardMarkup([
                 [InlineKeyboardButton(
                     "📥 Get File",
-                    url=f"https://t.me/{(await bot.get_me()).username}?start={file_id}"
+                    url=f"https://t.me/{bot.me.username}?start={file_id}"
                 )]
             ])
 
@@ -66,9 +63,6 @@ async def search_group(client, message):
                 f"🎬 {name}",
                 reply_markup=btn
             )
-            found = True
-
-    await searching.delete()
 
     if not found:
         await message.reply_text("❌ Not found")
