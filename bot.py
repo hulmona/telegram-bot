@@ -1,7 +1,7 @@
 from pyrogram import Client, filters
 import asyncio
-from flask import Flask
-from threading import Thread
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 API_ID = 38438389
 API_HASH = "327b2592682ff56d760110350e66425e"
@@ -16,7 +16,7 @@ files = {}
 async def save_file(client, message):
     files[message.document.file_name.lower()] = message.id
 
-@app.on_message(filters.group & filters.text)
+@app.on_message(filters.private & filters.text)
 async def search(client, message):
     text = message.text.lower()
     results = [name for name in files if text in name]
@@ -26,11 +26,13 @@ async def search(client, message):
         await message.reply(
             f"Found: {name}",
             reply_markup={
-                "inline_keyboard":[
-                    [{"text":"📥 Download","callback_data":name}]
-                ]
+                "inline_keyboard":[[
+                    {"text":"📥 Download","callback_data":name}
+                ]]
             }
         )
+    else:
+        await message.reply("File not found")
 
 @app.on_callback_query()
 async def send_file(client, callback_query):
@@ -39,21 +41,23 @@ async def send_file(client, callback_query):
 
     if msg_id:
         sent = await app.copy_message(callback_query.from_user.id, CHANNEL_ID, msg_id)
-        await callback_query.answer("File sent in DM")
+        await callback_query.answer("Sent in DM")
 
         await asyncio.sleep(300)
         await sent.delete()
 
-# keep alive server
-web = Flask('')
+# ---- tiny web server for render ----
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot running")
 
-@web.route('/')
-def home():
-    return "Bot running"
+def run_web():
+    port = 10000
+    server = HTTPServer(("", port), Handler)
+    server.serve_forever()
 
-def run():
-    web.run(host="0.0.0.0", port=8080)
-
-Thread(target=run).start()
+threading.Thread(target=run_web).start()
 
 app.run()
