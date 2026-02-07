@@ -1,62 +1,66 @@
 import os
 import asyncio
 from pyrogram import Client, filters
-from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo import MongoClient
 
-API_ID = int(os.getenv("API_ID"))
-API_HASH = os.getenv("API_HASH")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
-MONGO = os.getenv("MONGO_DB")
+API_ID = int(os.environ.get("API_ID"))
+API_HASH = os.environ.get("API_HASH")
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+MONGO_URI = os.environ.get("MONGO_URI")
+CHANNEL_ID = int(os.environ.get("CHANNEL_ID"))
+GROUP_ID = int(os.environ.get("GROUP_ID"))
 
 bot = Client("bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-mongo = AsyncIOMotorClient(MONGO)
-db = mongo["moviebot"]
+mongo = MongoClient(MONGO_URI)
+db = mongo["movies"]
 col = db["files"]
 
-# -------- AUTO SAVE FROM CHANNEL --------
+# START
+@bot.on_message(filters.command("start"))
+async def start(client, message):
+    await message.reply("Bot working ✅")
+
+# INDEX channel files
 @bot.on_message(filters.channel & filters.document)
-async def save_file(client, message):
-    name = message.document.file_name
+async def index_files(client, message):
     file_id = message.document.file_id
+    file_name = message.document.file_name
 
-    await col.update_one(
-        {"file_name": name},
-        {"$set": {"file_id": file_id}},
-        upsert=True
-    )
+    col.insert_one({
+        "name": file_name.lower(),
+        "file_id": file_id
+    })
 
-# -------- SEARCH IN GROUP --------
-@bot.on_message(filters.group & filters.text)
+# SEARCH
+@bot.on_message(filters.text & filters.group)
 async def search(client, message):
-    text = message.text
+    query = message.text.lower()
 
-    data = await col.find_one(
-        {"file_name": {"$regex": text, "$options": "i"}}
-    )
+    results = col.find({"name": {"$regex": query}}).limit(10)
 
-    if data:
-        file_id = data["file_id"]
-
-        await message.reply(
-            f"Result found",
-            reply_markup={
-                "inline_keyboard": [[
-                    {"text": "📥 Download", "callback_data": file_id}
-                ]]
-            }
+    buttons = []
+    for file in results:
+        buttons.append(
+            [ 
+                (file["name"], f"get_{file['file_id']}")
+            ]
         )
 
-# -------- SEND IN DM --------
-@bot.on_callback_query()
-async def send_file(client, query):
-    file_id = query.data
-    sent = await bot.send_document(query.from_user.id, file_id)
+    if not buttons:
+        return
 
-    await query.answer("Check DM")
+    txt = "Results:"
+    await message.reply(txt)
 
-    await asyncio.sleep(300)
-    await sent.delete()
+# SEND FILE
+@bot.on_message(filters.private & filters.text)
+async def send_file(client, message):
+    if message.text.startswith("get_"):
+        file_id = message.text.replace("get_","")
+        msg = await message.reply_document(file_id)
+
+        await asyncio.sleep(300)
+        await msg.delete()
 
 bot.run()
