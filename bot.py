@@ -1,65 +1,41 @@
-from pyrogram import Client, filters
-import asyncio
+import os
 import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from flask import Flask
+from pyrogram import Client, filters
 
-API_ID = 38438389
-API_HASH = "327b2592682ff56d760110350e66425e"
-BOT_TOKEN = "8298490569:AAGOm3fAOhqBxmvwsB2lrF-mCmvqbG3D7Fo"
-CHANNEL_ID = -1003801817080   # minus লাগবে
+API_ID = int(os.environ.get("API_ID"))
+API_HASH = os.environ.get("API_HASH")
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+CHANNEL_ID = int(os.environ.get("CHANNEL_ID"))
 
-app = Client("bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+bot = Client(
+    "bot",
+    api_id=API_ID,
+    api_hash=API_HASH,
+    bot_token=BOT_TOKEN
+)
 
-files = {}
+# start command
+@bot.on_message(filters.command("start"))
+async def start(client, message):
+    await message.reply_text("Bot is working ✅")
 
-# --------- channel file save ----------
-@app.on_message(filters.channel & filters.document)
-async def save_file(client, message):
-    name = message.document.file_name.lower()
-    files[name] = message.id
-
-# --------- search ----------
-@app.on_message(filters.group & filters.text)
+# search message
+@bot.on_message(filters.text & filters.private)
 async def search(client, message):
-    text = message.text.lower()
-    results = [name for name in files if text in name]
+    query = message.text
+    await message.reply_text(f"Searching for: {query}")
 
-    if results:
-        name = results[0]
-        await message.reply(
-            f"Found: {name}",
-            reply_markup={
-                "inline_keyboard": [[
-                    {"text": "📥 Download", "callback_data": name}
-                ]]
-            }
-        )
+# web server for render
+app = Flask('')
 
-# --------- send ----------
-@app.on_callback_query()
-async def send_file(client, callback_query):
-    name = callback_query.data
-    msg_id = files.get(name)
+@app.route('/')
+def home():
+    return "Bot running"
 
-    if msg_id:
-        sent = await app.copy_message(callback_query.from_user.id, CHANNEL_ID, msg_id)
-        await callback_query.answer("Check DM")
+def run():
+    app.run(host="0.0.0.0", port=10000)
 
-        await asyncio.sleep(300)
-        await sent.delete()
+threading.Thread(target=run).start()
 
-# --------- render keep alive ----------
-class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot running")
-
-def run_web():
-    server = HTTPServer(("0.0.0.0", 10000), Handler)
-    server.serve_forever()
-
-threading.Thread(target=run_web).start()
-
-# --------- start ----------
-app.run()
+bot.run()
