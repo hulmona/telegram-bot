@@ -71,36 +71,44 @@ async def index_files(client, message):
     await m.edit(f"✅ Indexing Complete! {count} files saved.")
 
 # ---------------- SEARCH LOGIC (In Group) ----------------
+# ---------------- SEARCH LOGIC (Updated) ----------------
 @bot.on_message(filters.text & filters.group)
 async def search(client, message):
     query = message.text.lower()
-    if len(query) < 3: return
+    if len(query) < 3: return # খুব ছোট নাম হলে সার্চ করবে না
 
-    # Search in Database (Fuzzy Search)
-    cursor = movies_col.find({"file_name": {"$regex": query}})
-    results = await cursor.to_list(length=10)
-
-    if not results:
-        # Fallback to Telegram Search if DB is empty
-        found = False
-        bot_info = await client.get_me()
-        async for msg in client.search_messages(BIN_CHANNEL, query=query, limit=5):
-            media = msg.document or msg.video
-            if media:
-                found = True
-                name = getattr(media, 'file_name', 'File')
-                btn = InlineKeyboardMarkup([[InlineKeyboardButton("📥 Get File", url=f"https://t.me/{bot_info.username}?start={msg.id}")]])
-                await message.reply_text(f"✅ **Found:** {name}", reply_markup=btn)
-        
-        if not found:
-            await message.reply_text("❌ মুভিটি পাওয়া যায়নি। দয়া করে বানান চেক করুন।")
-        return
-
-    # If results found in DB
+    wait = await message.reply_text("🔎 Searching...")
     bot_info = await client.get_me()
-    for movie in results:
-        btn = InlineKeyboardMarkup([[InlineKeyboardButton("📥 Get File", url=f"https://t.me/{bot_info.username}?start={movie['file_id']}")]])
-        await message.reply_text(f"✅ **Found:** {movie['original_name']}", reply_markup=btn)
+    results_found = False
+
+    try:
+        # প্রথমে ডাটাবেজে খুঁজবে (যদি ইনডেক্স করা থাকে)
+        cursor = movies_col.find({"file_name": {"$regex": query}})
+        results = await cursor.to_list(length=10)
+
+        if results:
+            results_found = True
+            for movie in results:
+                btn = InlineKeyboardMarkup([[InlineKeyboardButton("📥 Get File", url=f"https://t.me/{bot_info.username}?start={movie['file_id']}")]])
+                await message.reply_text(f"✅ **Found:** {movie['original_name']}", reply_markup=btn)
+        
+        else:
+            # ডাটাবেজে না পেলে সরাসরি চ্যানেলে খুঁজবে
+            async for msg in client.search_messages(BIN_CHANNEL, query=query):
+                media = msg.document or msg.video
+                if media:
+                    results_found = True
+                    name = getattr(media, 'file_name', 'File')
+                    btn = InlineKeyboardMarkup([[InlineKeyboardButton("📥 Get File", url=f"https://t.me/{bot_info.username}?start={msg.id}")]])
+                    await message.reply_text(f"✅ **Found:** {name}", reply_markup=btn)
+
+        if not results_found:
+            await message.reply_text("❌ দুঃখিত, আপনার নামে কোনো মুভি পাওয়া যায়নি।")
+
+    except Exception as e:
+        print(f"Error: {e}")
+    
+    await wait.delete()
 
 # ---------------- RUN BOT ----------------
 if __name__ == "__main__":
