@@ -198,7 +198,19 @@ def auto_filter_handler(update, context):
             button_text += f" | {quality} | {size}"
             
             buttons.append([InlineKeyboardButton(button_text, callback_data=f"movie_{movie['_id']}")])
-        
+
+        # telegram library manual install fallback
+try:
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackQueryHandler
+except ImportError:
+    # Install telegram-bot if not available
+    import subprocess
+    import sys
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "python-telegram-bot==13.15"])
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackQueryHandler
+    
         # Add page navigation if many results
         if len(results) == MAX_BTN:
             buttons.append([InlineKeyboardButton("📖 আরো রেজাল্ট দেখুন", callback_data=f"next_1_{query}")])
