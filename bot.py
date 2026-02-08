@@ -1,27 +1,33 @@
 import asyncio
+import threading
+from flask import Flask
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from motor.motor_asyncio import AsyncIOMotorClient
 
+# ------------------ WEB SERVER ------------------
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Bot is running!"
+
+def run_web():
+    app.run(host="0.0.0.0", port=10000)
+
+# ------------------ BOT CONFIG ------------------
 API_ID = 38438389
 API_HASH = "327b2592682ff56d760110350e66425e"
-BOT_TOKEN = "8298490569:AAGOm3fAOhqBxmvwsB2lrF-mCmvqbG3D7Fo"
+BOT_TOKEN = "PASTE_REAL_TOKEN"
 
-DATABASE_URI = "mongodb+srv://moviebot:Movie%4012345@cluster0.3qgtiud.mongodb.net/?retryWrites=true&w=majority"
+DATABASE_URI = "PASTE_REAL_MONGO_URI"
 DATABASE_NAME = "autofilter"
 
 ADMINS = [7916138581]
 BIN_CHANNEL = -1003801817080
 GROUP_ID = -1003836121942
 
-AUTO_FFILTER = True
-
-bot = Client(
-    "moviebot",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    bot_token=BOT_TOKEN
-)
+bot = Client("moviebot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 mongo = AsyncIOMotorClient(DATABASE_URI)
 db = mongo[DATABASE_NAME]
@@ -38,9 +44,7 @@ async def start(client, message):
     await save_user(message.from_user.id)
 
     if len(message.command) == 1:
-        await message.reply_text(
-            "👋 Welcome to Movie Bot\n\nSearch movie in group."
-        )
+        await message.reply_text("👋 Welcome to Movie Bot\n\nSearch movie in group.")
         return
 
     try:
@@ -49,19 +53,10 @@ async def start(client, message):
         await message.reply_text("Invalid link")
         return
 
-    try:
-        msg = await client.get_messages(BIN_CHANNEL, file_id)
-    except:
-        await message.reply_text("File fetch error")
-        return
-
-    if not msg:
-        await message.reply_text("File not found")
-        return
-
+    msg = await client.get_messages(BIN_CHANNEL, file_id)
     sent = await msg.copy(message.chat.id)
-    warn = await message.reply_text("⚠️ File will delete in 5 minutes")
 
+    warn = await message.reply_text("⚠️ File will delete in 5 minutes")
     await asyncio.sleep(300)
 
     try:
@@ -73,9 +68,6 @@ async def start(client, message):
 
 @bot.on_message(filters.text & filters.chat(GROUP_ID))
 async def search(client, message):
-    if not AUTO_FFILTER:
-        return
-
     query = message.text
     wait = await message.reply_text("🔎 Searching...")
 
@@ -103,5 +95,13 @@ async def search(client, message):
         await message.reply_text("❌ Movie not found")
 
 
-print("Bot running...")
-bot.run()
+def run_bot():
+    bot.run()
+
+
+# ------------------ MAIN ------------------
+if __name__ == "__main__":
+    t1 = threading.Thread(target=run_web)
+    t1.start()
+
+    run_bot()
