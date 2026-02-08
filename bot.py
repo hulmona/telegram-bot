@@ -4,9 +4,11 @@ import threading
 from flask import Flask
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from motor.motor_asyncio import AsyncIOMotorClient
 
 # ---------------- WEB ----------------
 app = Flask(__name__)
+
 @app.route("/")
 def home(): 
     return "Bot running"
@@ -19,17 +21,90 @@ API_ID = int(os.environ.get("API_ID", "0"))
 API_HASH = os.environ.get("API_HASH", "")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 BIN_CHANNEL = int(os.environ.get("BIN_CHANNEL", "0"))
-GROUP_ID = int(os.environ.get("GROUP_ID", "0"))
+DATABASE_URI = os.environ.get("DATABASE_URI", "")
+DATABASE_NAME = os.environ.get("DATABASE_NAME", "autofilter")
+ADMINS = list(map(int, os.environ.get("ADMINS", "7916138581").split()))
+
+# MongoDB Setup
+mongo_client = AsyncIOMotorClient(DATABASE_URI)
+db = mongo_client[DATABASE_NAME]
+files_collection = db.files
 
 bot = Client("moviebot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+
+# ---------------- INDEX FILES ----------------
+@bot.on_message(filters.command("index") & filters.private)
+async def index_files(client, message):
+    """Admin command: BIN_CHANNEL এর সব file database এ save করা"""
+    user_id = message.from_user.id
+    
+    if user_id not in ADMINS:
+        await message.reply_text("❌ You are not authorized!")
+        return
+    
+    status = await message.reply_text("📥 Indexing started...")
+    count = 0
+    
+    try:
+        async for msg in client.get_chat_history(BIN_CHANNEL):
+            media = msg.document or msg.video or msg.audio or msg.animation
+            
+            if media:
+                file_name = getattr(media, 'file_name', 'File')
+                file_size = getattr(media, 'file_size', 0)
+                file_id = msg.id
+                
+                # Database এ save করা
+                await files_collection.update_one(
+                    {"file_id": file_id},
+                    {
+                        "$set": {
+                            "file_id": file_id,
+                            "file_name": file_name,
+                            "file_size": file_size,
+                            "file_type": getattr(media, 'mime_type', None)
+                        }
+                    },
+                    upsert=True
+                )
+                
+                count += 1
+                
+                if count % 100 == 0:
+                    await status.edit_text(f"📥 Indexed: {count} files...")
+        
+        await status.edit_text(f"✅ Indexing Complete!\n📊 Total Files: {count}")
+        
+    except Exception as e:
+        await status.edit_text(f"❌ Error: {e}")
+        print(f"Indexing error: {e}")
+
+# ---------------- STATS COMMAND ----------------
+@bot.on_message(filters.command("stats") & filters.private)
+async def stats(client, message):
+    """Database stats"""
+    user_id = message.from_user.id
+    
+    if user_id not in ADMINS:
+        return
+    
+    try:
+        total = await files_collection.count_documents({})
+        await message.reply_text(f"📊 **Total Files:** {total:,}")
+    except Exception as e:
+        await message.reply_text(f"❌ Error: {e}")
 
 # ---------------- START DM ----------------
 @bot.on_message(filters.command("start") & filters.private)
 async def start(client, message):
     if len(message.command) == 1:
         await message.reply_text(
-            "👋 হ্যালো!\n\n"
-            "🎬 মুভি পেতে গ্রুপে গিয়ে মুভির নাম লিখুন।"
+            "👋 **হ্যালো!**\n\n"
+            "🎬 মুভি পেতে গ্রুপে গিয়ে মুভির নাম লিখুন।\n\n"
+            "💡 **Features:**\n"
+            "• Fast Search\n"
+            "• Auto Delete (5 min)\n"
+            "• 40,000+ Movies"
         )
         return
 
@@ -39,20 +114,24 @@ async def start(client, message):
         # BIN_CHANNEL থেকে file নিয়ে আসা
         msg = await client.get_messages(BIN_CHANNEL, file_id)
         
+        if not msg:
+            await message.reply_text("❌ File not found!")
+            return
+        
         # User এর DM এ file পাঠানো
         sent = await msg.copy(message.chat.id)
         
         # Warning message
         warn = await message.reply_text(
             "🛡️ **Security Notice:**\n"
-            "ফাইলটি ৫ মিনিট পর স্বয়ংক্রিয়ভাবে ডিলিট হয়ে যাবে।\n\n"
+            "ফাইলটি **৫ মিনিট** পর স্বয়ংক্রিয়ভাবে ডিলিট হয়ে যাবে।\n\n"
             "⏰ এখনই ডাউনলোড করে নিন!"
         )
         
-        # 5 মিনিট (300 সেকেন্ড) অপেক্ষা করা
+        # 5 মিনিট অপেক্ষা
         await asyncio.sleep(300)
         
-        # File এবং warning message ডিলিট করা
+        # ডিলিট করা
         try:
             await sent.delete()
             await warn.delete()
@@ -62,7 +141,7 @@ async def start(client, message):
     except ValueError:
         await message.reply_text("❌ Invalid file link!")
     except Exception as e:
-        await message.reply_text(f"❌ Error: File not found!")
+        await message.reply_text("❌ Error: File not found!")
         print(f"Start command error: {e}")
 
 # ---------------- SEARCH LOGIC ----------------
@@ -76,22 +155,25 @@ async def search(client, message):
 
     wait = await message.reply_text("🔎 Searching...")
     bot_info = await client.get_me()
-    results_count = 0
     max_results = 10
 
     try:
-        async for msg in client.search_messages(BIN_CHANNEL, query=query, limit=50):
-            media = msg.document or msg.video or msg.audio or msg.animation
-            
-            if media:
-                name = getattr(media, 'file_name', 'File')
-                file_id = msg.id
-                
-                # File size দেখানো (যদি থাকে)
-                size = getattr(media, 'file_size', 0)
+        # MongoDB তে regex search (case-insensitive)
+        search_results = files_collection.find(
+            {"file_name": {"$regex": query, "$options": "i"}}
+        ).limit(max_results)
+        
+        results_list = await search_results.to_list(length=max_results)
+        
+        if results_list:
+            for result in results_list:
+                name = result.get("file_name", "File")
+                file_id = result.get("file_id")
+                size = result.get("file_size", 0)
                 size_mb = size / (1024 * 1024) if size else 0
+                size_gb = size_mb / 1024
                 
-                # Button তৈরি করা
+                # Button তৈরি
                 btn = InlineKeyboardMarkup([[
                     InlineKeyboardButton(
                         "📥 Get File", 
@@ -100,27 +182,18 @@ async def search(client, message):
                 ]])
                 
                 # Result পাঠানো
-                caption = f"✅ **Found:**\n📁 {name}"
-                if size_mb > 0:
-                    caption += f"\n📊 Size: {size_mb:.2f} MB"
+                caption = f"✅ **Found:**\n📁 `{name}`"
+                
+                if size_gb >= 1:
+                    caption += f"\n📊 Size: **{size_gb:.2f} GB**"
+                elif size_mb > 0:
+                    caption += f"\n📊 Size: **{size_mb:.2f} MB**"
+                
+                caption += "\n\n⚠️ *Auto-delete: 5 minutes*"
                 
                 await message.reply_text(caption, reply_markup=btn)
-                
-                results_count += 1
-                
-                # Maximum result limit
-                if results_count >= max_results:
-                    await message.reply_text(
-                        f"📌 প্রথম {max_results}টি রেজাল্ট দেখানো হয়েছে।\n"
-                        "আরও specific নাম দিয়ে search করুন।"
-                    )
-                    break
-                
-                # Flood protection
-                await asyncio.sleep(0.5)
-        
-        # কোনো result না পেলে
-        if results_count == 0:
+                await asyncio.sleep(0.5)  # Flood protection
+        else:
             await message.reply_text(
                 "❌ দুঃখিত, আপনার নামে কোনো মুভি পাওয়া যায়নি।\n\n"
                 "💡 **Tips:**\n"
@@ -133,7 +206,6 @@ async def search(client, message):
         print(f"Search Error: {e}")
         await message.reply_text("⚠️ Search করতে সমস্যা হয়েছে। আবার চেষ্টা করুন।")
     
-    # "Searching..." message ডিলিট করা
     try:
         await wait.delete()
     except:
@@ -141,11 +213,12 @@ async def search(client, message):
 
 # ---------------- RUN ----------------
 if __name__ == "__main__":
-    # Web server background এ চালানো
     threading.Thread(target=run_web, daemon=True).start()
     
+    print("=" * 50)
     print("🚀 Bot starting...")
-    print("✅ Web server running on port 10000")
+    print("✅ Web server: http://0.0.0.0:10000")
+    print("🗄️ MongoDB: Connected")
+    print("=" * 50)
     
-    # Bot চালানো
     bot.run()
